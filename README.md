@@ -188,7 +188,7 @@ pip install pygame pyautogui psutil
 ```
 📁 your_folder\
    pacer_prank.py
-   pacer_test.mp3      ← drop your MP3 here
+   pacer_test.mp3      ← MP3 Included
 ```
 
 ```bash
