@@ -189,7 +189,7 @@ pip install pygame pyautogui psutil
 ```
 📁 your_folder\
    pacer_prank.py
-   pacer_test.mp3      ← drop your MP3 here
+   pacer_test.mp3      ← MP3 File
 ```
 
 ```bash
@@ -278,7 +278,7 @@ ntdll.NtRaiseHardError(0xC000007B, 0, 0, 0, 6, ...)  # ResponseOption 6 = crash
  ┣ 📜 pacer_prank.py     ← main prank script
  ┣ 📜 compile.bat        ← one-click EXE compiler
  ┣ 📜 README.md          ← you are here
- ┗ 🎵 pacer_test.mp3     ← NOT included, bring your own
+ ┗ 🎵 pacer_test.mp3     ← MP3 File
 ```
 
 ---
