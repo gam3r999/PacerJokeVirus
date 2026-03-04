@@ -122,7 +122,35 @@ MAX_ERRORS    = 20
 #  AUDIO
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Flag: True during first 45s (force max volume), False after (user controls volume)
+_force_max_volume = True
+
+def _system_volume_max():
+    """
+    Force Windows master volume to 100% using the Core Audio API via ctypes.
+    Works independently of pygame — controls the actual Windows volume mixer.
+    """
+    try:
+        from ctypes import POINTER, cast
+        from comtypes import CLSCTX_ALL
+        from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+        devices = AudioUtilities.GetSpeakers()
+        interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+        volume = cast(interface, POINTER(IAudioEndpointVolume))
+        volume.SetMasterVolumeLevelScalar(1.0, None)
+        volume.SetMute(0, None)
+    except Exception:
+        # fallback: use nircmd or keybd_event to send volume-up keys repeatedly
+        try:
+            # Send VK_VOLUME_UP (0xAF) many times to slam volume to max
+            for _ in range(50):
+                ctypes.windll.user32.keybd_event(0xAF, 0, 0, 0)
+                ctypes.windll.user32.keybd_event(0xAF, 0, 2, 0)
+        except Exception:
+            pass
+
 def play_audio():
+    global _force_max_volume
     if not PYGAME_OK or not MP3_PATH or not os.path.isfile(MP3_PATH):
         print("[audio] skipped – no pygame or mp3 not found:", MP3_PATH)
         return
@@ -130,15 +158,29 @@ def play_audio():
     pygame.mixer.music.load(MP3_PATH)
     pygame.mixer.music.set_volume(1.0)
     pygame.mixer.music.play()
-    # watchdog: restart instantly if anything pauses/stops/mutes it
+
+    audio_start = time.time()
+
     while app_running:
         try:
-            if not pygame.mixer.music.get_busy():
-                pygame.mixer.music.load(MP3_PATH)
+            elapsed = time.time() - audio_start
+
+            if elapsed < 45.0:
+                # Phase 1: force max volume — spam system volume up + pygame volume
+                _force_max_volume = True
                 pygame.mixer.music.set_volume(1.0)
-                pygame.mixer.music.play()
-            # force volume back to max every tick (blocks mute attempts)
-            pygame.mixer.music.set_volume(1.0)
+                _system_volume_max()
+                if not pygame.mixer.music.get_busy():
+                    pygame.mixer.music.load(MP3_PATH)
+                    pygame.mixer.music.set_volume(1.0)
+                    pygame.mixer.music.play()
+            else:
+                # Phase 2: hands off — user has full control over volume
+                _force_max_volume = False
+                if not pygame.mixer.music.get_busy():
+                    pygame.mixer.music.load(MP3_PATH)
+                    pygame.mixer.music.play()
+
         except Exception:
             pass
         time.sleep(0.1)
@@ -332,39 +374,64 @@ def gdi_kaleidoscope(sw, sh):
     _free_mem(mem, bmp)
     ReleaseDC(None, hdc)
 
-GDI_EFFECTS = [
-    gdi_invert,
-    gdi_wobble,
-    gdi_tunnel,
-    gdi_rotation_chunks,
-    gdi_swirl,
-    gdi_static,
-    gdi_vflip_strips,
-    gdi_kaleidoscope,
-    gdi_tunnel,       # extra weight — very impactful
-    gdi_swirl,
-    gdi_wobble,
-    gdi_invert,
+# Effects ordered from mildest to most intense
+# Level 0-1 : static noise only (barely noticeable)
+# Level 2-3 : wobble added
+# Level 4-5 : tunnel added
+# Level 6-7 : rotation chunks + kaleidoscope
+# Level 8-9 : swirl + vflip
+# Level 10+ : full invert + everything, sleep shrinks to 0
+
+GDI_LEVELS = [
+    # (min_clicks, effect_pool, sleep, burst_range)
+    # GDI thread only starts at click 7 (GDI_START), so 7 = level 0 baseline
+    # Tunnel deliberately held back until click 20 so user has a real chance
+    (7,  [gdi_static],                                              0.20, (20, 40)),  # 0  barely visible
+    (9,  [gdi_static, gdi_wobble],                                  0.14, (16, 30)),  # 1  wobble starts
+    (11, [gdi_wobble, gdi_wobble, gdi_static],                      0.10, (12, 24)),  # 2  more wobble
+    (13, [gdi_wobble, gdi_static],                                  0.09, (12, 22)),  # 3  still just wobble
+    (15, [gdi_wobble, gdi_rotation_chunks],                         0.08, (10, 20)),  # 4  chunks appear (no tunnel yet)
+    (17, [gdi_wobble, gdi_rotation_chunks, gdi_kaleidoscope],       0.07, (8,  16)),  # 5  kaleido joins
+    (19, [gdi_rotation_chunks, gdi_kaleidoscope, gdi_wobble],       0.055,(6,  14)),  # 6  chunks heavy
+    (20, [gdi_rotation_chunks, gdi_kaleidoscope, gdi_tunnel],       0.045,(6,  12)),  # 7  TUNNEL STARTS HERE
+    (22, [gdi_tunnel, gdi_kaleidoscope, gdi_swirl],                 0.038,(5,  10)),  # 8  swirl joins
+    (24, [gdi_swirl, gdi_tunnel, gdi_vflip_strips],                 0.030,(4,  8)),   # 9  flips
+    (26, [gdi_swirl, gdi_invert, gdi_tunnel, gdi_vflip_strips],     0.022,(3,  6)),   # 10 invert joins
+    (28, [gdi_invert, gdi_swirl, gdi_tunnel, gdi_rotation_chunks],  0.015,(2,  4)),   # 11 near full
+    (33, [gdi_invert, gdi_swirl, gdi_tunnel, gdi_rotation_chunks,
+          gdi_kaleidoscope, gdi_vflip_strips, gdi_wobble],          0.008,(1,  2)),   # 12 FULL CHAOS
 ]
 
+def _get_gdi_level():
+    """Return the highest level whose min_clicks <= click_count."""
+    level = GDI_LEVELS[0]
+    for entry in GDI_LEVELS:
+        if click_count >= entry[0]:
+            level = entry
+    return level
+
 def gdi_thread_func():
-    """Cycles through all 8 GDI effects, switching every 6-18 frames at ~30fps."""
+    """
+    GDI intensity scales with click_count.
+    Starts as barely-visible static so the user can still click,
+    then gets progressively more unhinged with every click.
+    """
     global app_running
     sw, sh = _sw_sh()
-    idx    = 0
-    burst  = 0
-    random.shuffle(GDI_EFFECTS)
+    idx   = 0
+    burst = 0
 
     while app_running and gdi_active:
+        _, pool, sleep_t, burst_range = _get_gdi_level()
         try:
-            GDI_EFFECTS[idx % len(GDI_EFFECTS)](sw, sh)
+            pool[idx % len(pool)](sw, sh)
         except Exception as e:
             print("[gdi] error:", e)
         burst += 1
-        if burst >= random.randint(6, 18):
+        if burst >= random.randint(*burst_range):
             burst = 0
             idx  += 1
-        time.sleep(0.035)
+        time.sleep(sleep_t)
 
 
 
@@ -700,10 +767,30 @@ def silent_phase():
 #  PHASE 2 – window appears, audio keeps playing
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _is_touchscreen():
+    """
+    Detect if the primary display supports touch input.
+    Uses GetSystemMetrics(SM_DIGITIZER) — bit 6 set means integrated touch.
+    Also checks SM_MAXIMUMTOUCHES > 0 as a fallback.
+    """
+    try:
+        SM_DIGITIZER      = 94
+        SM_MAXIMUMTOUCHES = 95
+        NID_INTEGRATED_TOUCH = 0x41   # bits: ready(0x80) | multi(0x40) | touch(0x01)
+        digitizer = ctypes.windll.user32.GetSystemMetrics(SM_DIGITIZER)
+        max_touch = ctypes.windll.user32.GetSystemMetrics(SM_MAXIMUMTOUCHES)
+        return bool(digitizer & NID_INTEGRATED_TOUCH) or max_touch > 0
+    except Exception:
+        return False
+
+
 def launch_prank():
     global root, btn
 
     threading.Thread(target=nag_loop, daemon=True).start()
+
+    is_touch = _is_touchscreen()
+    print(f"[touch] touchscreen detected: {is_touch}")
 
     root = tk.Tk()
     root.title("Totally Normal Program")
@@ -713,7 +800,11 @@ def launch_prank():
     win_w, win_h = 260, 120
     sw = root.winfo_screenwidth()
     sh = root.winfo_screenheight()
-    root.geometry(f"{win_w}x{win_h}+{(sw - win_w) // 2}+{(sh - win_h) // 2}")
+
+    # Base window position — centre of screen
+    base_x = (sw - win_w) // 2
+    base_y = (sh - win_h) // 2
+    root.geometry(f"{win_w}x{win_h}+{base_x}+{base_y}")
 
     frame = tk.Frame(root, bg="#f0f0f0", padx=20, pady=20)
     frame.pack(fill="both", expand=True)
@@ -728,6 +819,33 @@ def launch_prank():
         command=on_click,
     )
     btn.pack(expand=True)
+
+    # ── touchscreen window shake ──────────────────────────────────────────────
+    if is_touch:
+        _shake_offset = [0]
+        _shake_dir    = [1]
+
+        def _shake_window():
+            """
+            Rapidly relocate the window in a jittery pattern so it's hard
+            to tap accurately on a touchscreen.
+            Intensity increases with click_count just like the mouse jiggle.
+            """
+            if not app_running:
+                return
+            intensity = max(8, min(click_count * 6, 120))
+            ox = random.randint(-intensity, intensity)
+            oy = random.randint(-intensity, intensity)
+            nx = max(0, min(sw - win_w, base_x + ox))
+            ny = max(0, min(sh - win_h, base_y + oy))
+            try:
+                root.geometry(f"{win_w}x{win_h}+{nx}+{ny}")
+            except Exception:
+                pass
+            delay = max(30, 200 - click_count * 8)
+            root.after(delay, _shake_window)
+
+        root.after(500, _shake_window)
 
     # ── block ALL normal exit methods ────────────────────────────────────────
     # X button / Alt+F4 → do nothing
