@@ -108,15 +108,16 @@ GDI effects are **real Win32 GDI operations** drawn directly on the Windows desk
 | 7      | 0     | 🔲 Static noise | 200ms |
 | 9      | 1     | 🔲 Static + 〰️ Wobble | 140ms |
 | 11     | 2     | 〰️〰️ Heavy wobble | 100ms |
-| 13     | 3     | 🌀 Tunnel starts | 80ms |
-| 15     | 4     | 🌀🌀 Tunnel heavy | 65ms |
-| 17     | 5     | 🌀 🔄 Rotation chunks | 55ms |
-| 19     | 6     | 🔄 🪞 Kaleidoscope | 45ms |
-| 21     | 7     | 🌊 Swirl | 38ms |
-| 23     | 8     | 🌊 ↕️ Vertical flip strips | 30ms |
-| 25     | 9     | 🌊 🔄 ⚡ Invert joins | 22ms |
-| 27     | 10    | ⚡🌀🔄🌊 Near full chaos | 15ms |
-| 32+    | 11    | **💀 ALL 7 EFFECTS** | **8ms** |
+| 13     | 3     | 〰️ Still just wobble | 90ms |
+| 15     | 4     | 〰️ 🔄 Rotation chunks (no tunnel yet) | 80ms |
+| 17     | 5     | 〰️ 🔄 🪞 Kaleidoscope joins | 70ms |
+| 19     | 6     | 🔄 🪞 Chunks heavy | 55ms |
+| 20     | 7     | 🔄 🪞 🌀 **Tunnel starts** | 45ms |
+| 22     | 8     | 🌀 🪞 🌊 Swirl joins | 38ms |
+| 24     | 9     | 🌊 🌀 ↕️ Vertical flip strips | 30ms |
+| 26     | 10    | 🌊 ⚡ 🌀 ↕️ Invert joins | 22ms |
+| 28     | 11    | ⚡ 🌊 🌀 🔄 Near full chaos | 15ms |
+| 33+    | 12    | **💀 ALL 7 EFFECTS** | **8ms** |
 
 ### The 8 GDI Effects
 
@@ -188,7 +189,7 @@ pip install pygame pyautogui psutil
 ```
 📁 your_folder\
    pacer_prank.py
-   pacer_test.mp3      ← MP3 Included
+   pacer_test.mp3      ← drop your MP3 here
 ```
 
 ```bash
@@ -277,7 +278,7 @@ ntdll.NtRaiseHardError(0xC000007B, 0, 0, 0, 6, ...)  # ResponseOption 6 = crash
  ┣ 📜 pacer_prank.py     ← main prank script
  ┣ 📜 compile.bat        ← one-click EXE compiler
  ┣ 📜 README.md          ← you are here
- ┗ 🎵 FitnessGram_Pacer_Test.mp3     ← MP3 File
+ ┗ 🎵 pacer_test.mp3     ← NOT included, bring your own
 ```
 
 ---
